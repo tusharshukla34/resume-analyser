@@ -1,14 +1,24 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 
 from app.services.pdf_parser import extract_text_from_pdf
-from app.models.schemas import ResumeUploadResponse
+from app.services.llm_client import (
+    summarize_resume,
+    extract_structured_resume,
+    get_role_requirements,
+)
+from app.prompts.resume_prompts import (
+    RESUME_SUMMARY_SYSTEM_PROMPT,
+    RESUME_EXTRACTION_SYSTEM_PROMPT,
+)
+from app.prompts.role_prompts import ROLE_UNDERSTANDING_SYSTEM_PROMPT
+from app.models.schemas import (
+    ResumeUploadResponse,
+    ResumeStructured,
+    RoleRequest,
+    RoleRequirements,
+)
 
-from app.services.llm_client import summarize_resume
-from app.prompts.resume_prompts import RESUME_SUMMARY_SYSTEM_PROMPT
 
-from app.services.llm_client import extract_structured_resume
-from app.prompts.resume_prompts import RESUME_EXTRACTION_SYSTEM_PROMPT
-from app.models.schemas import ResumeStructured
 
 
 app = FastAPI(title="Resume Analyzer API")
@@ -109,3 +119,19 @@ async def analyze_resume_endpoint(file: UploadFile = File(...)):
         raise HTTPException(status_code=503, detail=str(e))
 
     return structured_data
+
+@app.post("/understand-role", response_model=RoleRequirements)
+async def understand_role_endpoint(payload: RoleRequest):
+    role_title = payload.role_title.strip()
+
+    if not role_title:
+        raise HTTPException(status_code=400, detail="Role title cannot be empty.")
+    if len(role_title) > 100:
+        raise HTTPException(status_code=400, detail="Role title is too long.")
+
+    try:
+        role_data = get_role_requirements(role_title, ROLE_UNDERSTANDING_SYSTEM_PROMPT)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    return role_data

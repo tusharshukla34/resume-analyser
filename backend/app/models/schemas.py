@@ -15,4 +15,14 @@ class ResumeStructured(BaseModel):
     skills: List[str]
     education: List[str]
     experience: List[str]
-    projects: List[str]    
+    projects: List[str]
+
+class RoleRequest(BaseModel):
+    role_title: str
+
+
+class RoleRequirements(BaseModel):
+    role_title: str
+    required_skills: List[str]
+    keywords: List[str]
+    typical_responsibilities: List[str]        

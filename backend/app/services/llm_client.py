@@ -3,6 +3,9 @@ from groq import Groq, APIError
 
 from app.config import GROQ_API_KEY
 
+
+from app.models.schemas import RoleRequirements
+
 client = Groq(api_key=GROQ_API_KEY)
 
 MODEL = "openai/gpt-oss-20b"
@@ -71,3 +74,39 @@ def extract_structured_resume(resume_text: str, system_prompt: str) -> ResumeStr
             break  # don't retry on a schema mismatch, likely a persistent issue
 
     raise RuntimeError(f"Failed to extract structured resume data: {last_error}")
+
+
+def get_role_requirements(role_title: str, system_prompt: str) -> RoleRequirements:
+    last_error = None
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = client.chat.completions.create(
+                model=MODEL,
+                temperature=0.2,
+                max_tokens=1000,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Job role: {role_title}"},
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "role_requirements",
+                        "schema": RoleRequirements.model_json_schema(),
+                    },
+                },
+            )
+            raw_json = response.choices[0].message.content
+            return RoleRequirements.model_validate_json(raw_json)
+
+        except APIError as e:
+            last_error = e
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SECONDS * attempt)
+            continue
+        except ValueError as e:
+            last_error = e
+            break
+
+    raise RuntimeError(f"Failed to get role requirements: {last_error}")
