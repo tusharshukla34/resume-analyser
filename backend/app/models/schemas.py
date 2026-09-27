@@ -6,7 +6,7 @@ class ResumeUploadResponse(BaseModel):
     filename: str
     extracted_text: str
     character_count: int
-    
+
 
 class ResumeStructured(BaseModel):
     candidate_summary: str
@@ -51,5 +51,15 @@ class Suggestion(BaseModel):
 
 
 class SuggestionResult(BaseModel):
+    suggestions: List[Suggestion]
+    overall_advice: str    
+
+class FullAnalysisResult(BaseModel):
+    resume: ResumeStructured
+    role: RoleRequirements
+    matched_skills: List[str]
+    missing_skills: List[str]
+    match_percentage: float
+    match_analysis: str
     suggestions: List[Suggestion]
     overall_advice: str    

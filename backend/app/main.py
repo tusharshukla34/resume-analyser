@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 
 from app.services.pdf_parser import extract_text_from_pdf
 from app.services.matcher import calculate_match_score
-
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from app.prompts.match_prompts import MATCH_ANALYSIS_SYSTEM_PROMPT
 from app.services.llm_client import (
     summarize_resume,
@@ -26,6 +26,14 @@ from app.models.schemas import (
     SuggestionRequest,
     SuggestionResult,
 )
+
+
+
+from app.services.pdf_parser import validate_and_extract_pdf
+from app.services.pipeline import run_resume_analysis_pipeline
+from app.models.schemas import FullAnalysisResult
+
+
 
 from app.prompts.suggestion_prompts import SUGGESTION_SYSTEM_PROMPT
 
@@ -191,3 +199,29 @@ async def generate_suggestions_endpoint(payload: SuggestionRequest):
         raise HTTPException(status_code=503, detail=str(e))
 
     return result
+
+@app.post("/full-analysis", response_model=FullAnalysisResult)
+async def full_analysis_endpoint(file: UploadFile = File(...), role_title: str = Form(...)):
+    role_title = role_title.strip()
+    if not role_title:
+        raise HTTPException(status_code=400, detail="Role title cannot be empty.")
+    if len(role_title) > 100:
+        raise HTTPException(status_code=400, detail="Role title is too long.")
+
+    extracted_text = await validate_and_extract_pdf(file)
+
+    try:
+        result = run_resume_analysis_pipeline(extracted_text, role_title)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    return result
+
+@app.post("/upload-resume", response_model=ResumeUploadResponse)
+async def upload_resume(file: UploadFile = File(...)):
+    extracted_text = await validate_and_extract_pdf(file)
+    return ResumeUploadResponse(
+        filename=file.filename,
+        extracted_text=extracted_text,
+        character_count=len(extracted_text),
+    )

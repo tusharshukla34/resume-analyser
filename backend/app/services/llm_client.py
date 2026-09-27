@@ -12,6 +12,29 @@ MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 2
 
 
+def call_llm_with_retry(create_request_fn, parse_response_fn):
+    """
+    Shared retry-with-backoff wrapper for any LLM call.
+    create_request_fn: a zero-arg function that performs the actual API call and returns the raw response.
+    parse_response_fn: a function that takes the raw response and returns the final parsed result
+                        (may raise ValueError/ValidationError for non-retryable failures).
+    """
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            raw_response = create_request_fn()
+            return parse_response_fn(raw_response)
+        except APIError as e:
+            last_error = e
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SECONDS * attempt)
+            continue
+        except ValueError as e:
+            last_error = e
+            break
+
+    raise RuntimeError(f"LLM call failed after retries: {last_error}")
+
 def summarize_resume(resume_text: str, system_prompt: str) -> str:
     last_error = None
 
