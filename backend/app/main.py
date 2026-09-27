@@ -1,9 +1,13 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+import logging
+import time
 
-from app.services.pdf_parser import extract_text_from_pdf
-from app.services.matcher import calculate_match_score
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from app.prompts.match_prompts import MATCH_ANALYSIS_SYSTEM_PROMPT
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import ALLOWED_ORIGINS, GROQ_API_KEY
+from app.services.pdf_parser import validate_and_extract_pdf
+from app.services.matcher import calculate_match_score
+from app.services.pipeline import run_resume_analysis_pipeline
 from app.services.llm_client import (
     summarize_resume,
     extract_structured_resume,
@@ -16,6 +20,8 @@ from app.prompts.resume_prompts import (
     RESUME_EXTRACTION_SYSTEM_PROMPT,
 )
 from app.prompts.role_prompts import ROLE_UNDERSTANDING_SYSTEM_PROMPT
+from app.prompts.match_prompts import MATCH_ANALYSIS_SYSTEM_PROMPT
+from app.prompts.suggestion_prompts import SUGGESTION_SYSTEM_PROMPT
 from app.models.schemas import (
     ResumeUploadResponse,
     ResumeStructured,
@@ -25,54 +31,56 @@ from app.models.schemas import (
     MatchResult,
     SuggestionRequest,
     SuggestionResult,
+    FullAnalysisResult,
 )
-
-
-
-from app.services.pdf_parser import validate_and_extract_pdf
-from app.services.pipeline import run_resume_analysis_pipeline
-from app.models.schemas import FullAnalysisResult
-
-
-
-from app.prompts.suggestion_prompts import SUGGESTION_SYSTEM_PROMPT
 
 app = FastAPI(title="Resume Analyzer API")
 
-MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
+# --- Logging setup ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger("resume_analyzer")
+
+# --- CORS setup ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# --- Request logging middleware ---
+@app.middleware("http")
+async def log_requests(request, call_next):
+    start_time = time.time()
+    logger.info(f"Request started: {request.method} {request.url.path}")
+
+    response = await call_next(request)
+
+    duration = time.time() - start_time
+    logger.info(
+        f"Request completed: {request.method} {request.url.path} "
+        f"- status={response.status_code} - {duration:.2f}s"
+    )
+    return response
 
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "service": "resume-analyzer-backend"}
+    return {
+        "status": "ok",
+        "service": "resume-analyzer-backend",
+        "groq_api_configured": bool(GROQ_API_KEY),
+    }
 
 
 @app.post("/upload-resume", response_model=ResumeUploadResponse)
 async def upload_resume(file: UploadFile = File(...)):
-    # 1. Validate content type
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
-
-    # 2. Read bytes and validate size
-    contents = await file.read()
-    if len(contents) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(status_code=400, detail="File exceeds 5MB size limit.")
-    if len(contents) == 0:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-
-    # 3. Extract text
-    try:
-        extracted_text = extract_text_from_pdf(contents)
-    except Exception:
-        raise HTTPException(status_code=422, detail="Could not read this PDF. It may be corrupted.")
-
-    # 4. Validate extraction result
-    if not extracted_text.strip():
-        raise HTTPException(
-            status_code=422,
-            detail="No text could be extracted. The PDF may be scanned/image-based.",
-        )
-
+    extracted_text = await validate_and_extract_pdf(file)
     return ResumeUploadResponse(
         filename=file.filename,
         extracted_text=extracted_text,
@@ -82,74 +90,35 @@ async def upload_resume(file: UploadFile = File(...)):
 
 @app.post("/summarize-resume")
 async def summarize_resume_endpoint(file: UploadFile = File(...)):
-    # Reuse Phase 2 validation + extraction
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
-
-    contents = await file.read()
-    if len(contents) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(status_code=400, detail="File exceeds 5MB size limit.")
-    if len(contents) == 0:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-
-    try:
-        extracted_text = extract_text_from_pdf(contents)
-    except Exception:
-        raise HTTPException(status_code=422, detail="Could not read this PDF. It may be corrupted.")
-
-    if not extracted_text.strip():
-        raise HTTPException(status_code=422, detail="No text could be extracted.")
-
-    # NEW: call the LLM
+    extracted_text = await validate_and_extract_pdf(file)
     try:
         summary = summarize_resume(extracted_text, RESUME_SUMMARY_SYSTEM_PROMPT)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
-
     return {"filename": file.filename, "summary": summary}
-
 
 
 @app.post("/analyze-resume", response_model=ResumeStructured)
 async def analyze_resume_endpoint(file: UploadFile = File(...)):
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
-
-    contents = await file.read()
-    if len(contents) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(status_code=400, detail="File exceeds 5MB size limit.")
-    if len(contents) == 0:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-
-    try:
-        extracted_text = extract_text_from_pdf(contents)
-    except Exception:
-        raise HTTPException(status_code=422, detail="Could not read this PDF. It may be corrupted.")
-
-    if not extracted_text.strip():
-        raise HTTPException(status_code=422, detail="No text could be extracted.")
-
+    extracted_text = await validate_and_extract_pdf(file)
     try:
         structured_data = extract_structured_resume(extracted_text, RESUME_EXTRACTION_SYSTEM_PROMPT)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
-
     return structured_data
+
 
 @app.post("/understand-role", response_model=RoleRequirements)
 async def understand_role_endpoint(payload: RoleRequest):
     role_title = payload.role_title.strip()
-
     if not role_title:
         raise HTTPException(status_code=400, detail="Role title cannot be empty.")
     if len(role_title) > 100:
         raise HTTPException(status_code=400, detail="Role title is too long.")
-
     try:
         role_data = get_role_requirements(role_title, ROLE_UNDERSTANDING_SYSTEM_PROMPT)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
-
     return role_data
 
 
@@ -157,15 +126,11 @@ async def understand_role_endpoint(payload: RoleRequest):
 async def match_resume_to_role_endpoint(payload: MatchRequest):
     resume_skills = payload.resume.skills
     required_skills = payload.role.required_skills
-
-    # Our own trusted calculation - always the source of truth for numbers returned to the client
     score_data = calculate_match_score(resume_skills, required_skills)
-
     try:
         analysis = generate_match_analysis(resume_skills, required_skills, MATCH_ANALYSIS_SYSTEM_PROMPT)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
-
     return MatchResult(
         matched_skills=score_data["matched_skills"],
         missing_skills=score_data["missing_skills"],
@@ -174,20 +139,17 @@ async def match_resume_to_role_endpoint(payload: MatchRequest):
     )
 
 
-
 @app.post("/generate-suggestions", response_model=SuggestionResult)
 async def generate_suggestions_endpoint(payload: SuggestionRequest):
-    # Handle the "no gaps" case without spending an LLM call
     if not payload.missing_skills:
         return SuggestionResult(
             suggestions=[],
             overall_advice=(
-                f"Great news — your resume already covers all the key skills "
+                f"Great news - your resume already covers all the key skills "
                 f"typically required for a {payload.role_title} role. "
                 f"Focus on quantifying your impact in existing experience and projects."
             ),
         )
-
     try:
         result = generate_suggestions(
             payload.role_title,
@@ -197,8 +159,8 @@ async def generate_suggestions_endpoint(payload: SuggestionRequest):
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
-
     return result
+
 
 @app.post("/full-analysis", response_model=FullAnalysisResult)
 async def full_analysis_endpoint(file: UploadFile = File(...), role_title: str = Form(...)):
@@ -216,12 +178,3 @@ async def full_analysis_endpoint(file: UploadFile = File(...), role_title: str =
         raise HTTPException(status_code=503, detail=str(e))
 
     return result
-
-@app.post("/upload-resume", response_model=ResumeUploadResponse)
-async def upload_resume(file: UploadFile = File(...)):
-    extracted_text = await validate_and_extract_pdf(file)
-    return ResumeUploadResponse(
-        filename=file.filename,
-        extracted_text=extracted_text,
-        character_count=len(extracted_text),
-    )
