@@ -5,6 +5,7 @@ from app.services.llm_client import (
     summarize_resume,
     extract_structured_resume,
     get_role_requirements,
+    generate_match_analysis,
 )
 from app.prompts.resume_prompts import (
     RESUME_SUMMARY_SYSTEM_PROMPT,
@@ -16,10 +17,13 @@ from app.models.schemas import (
     ResumeStructured,
     RoleRequest,
     RoleRequirements,
+    MatchRequest,
+    MatchResult,
 )
 
+from app.services.matcher import calculate_match_score
 
-
+from app.prompts.match_prompts import MATCH_ANALYSIS_SYSTEM_PROMPT
 
 app = FastAPI(title="Resume Analyzer API")
 
@@ -135,3 +139,24 @@ async def understand_role_endpoint(payload: RoleRequest):
         raise HTTPException(status_code=503, detail=str(e))
 
     return role_data
+
+
+@app.post("/match-resume-to-role", response_model=MatchResult)
+async def match_resume_to_role_endpoint(payload: MatchRequest):
+    resume_skills = payload.resume.skills
+    required_skills = payload.role.required_skills
+
+    # Our own trusted calculation - always the source of truth for numbers returned to the client
+    score_data = calculate_match_score(resume_skills, required_skills)
+
+    try:
+        analysis = generate_match_analysis(resume_skills, required_skills, MATCH_ANALYSIS_SYSTEM_PROMPT)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    return MatchResult(
+        matched_skills=score_data["matched_skills"],
+        missing_skills=score_data["missing_skills"],
+        match_percentage=score_data["match_percentage"],
+        analysis=analysis,
+    )

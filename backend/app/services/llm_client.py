@@ -1,9 +1,8 @@
 import time
 from groq import Groq, APIError
-
 from app.config import GROQ_API_KEY
-
-
+import json
+from app.services.matcher import calculate_match_score, MATCH_TOOL_SCHEMA
 from app.models.schemas import RoleRequirements
 
 client = Groq(api_key=GROQ_API_KEY)
@@ -110,3 +109,66 @@ def get_role_requirements(role_title: str, system_prompt: str) -> RoleRequiremen
             break
 
     raise RuntimeError(f"Failed to get role requirements: {last_error}")
+
+
+
+def generate_match_analysis(resume_skills: list[str], required_skills: list[str], system_prompt: str) -> str:
+    """
+    Uses tool calling: the LLM calls calculate_match_score to get real numbers,
+    then writes an analysis grounded in that result.
+    """
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": f"Resume skills: {resume_skills}\nRequired skills: {required_skills}",
+        },
+    ]
+
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            # Turn 1: let the LLM decide to call the tool
+            response = client.chat.completions.create(
+                model=MODEL,
+                temperature=0.2,
+                max_tokens=500,
+                messages=messages,
+                tools=[MATCH_TOOL_SCHEMA],
+                tool_choice="auto",
+            )
+            message = response.choices[0].message
+
+            if not message.tool_calls:
+                # LLM answered directly without calling the tool - unusual, but handle gracefully
+                return message.content
+
+            # Execute the real tool call ourselves
+            tool_call = message.tool_calls[0]
+            args = json.loads(tool_call.function.arguments)
+            tool_result = calculate_match_score(**args)
+
+            # Feed the tool result back to the LLM
+            messages.append(message)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": json.dumps(tool_result),
+            })
+
+            # Turn 2: get the final, grounded analysis
+            final_response = client.chat.completions.create(
+                model=MODEL,
+                temperature=0.2,
+                max_tokens=500,
+                messages=messages,
+            )
+            return final_response.choices[0].message.content
+
+        except APIError as e:
+            last_error = e
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SECONDS * attempt)
+            continue
+
+    raise RuntimeError(f"Failed to generate match analysis: {last_error}")
