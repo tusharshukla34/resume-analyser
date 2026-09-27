@@ -1,11 +1,15 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 
 from app.services.pdf_parser import extract_text_from_pdf
+from app.services.matcher import calculate_match_score
+
+from app.prompts.match_prompts import MATCH_ANALYSIS_SYSTEM_PROMPT
 from app.services.llm_client import (
     summarize_resume,
     extract_structured_resume,
     get_role_requirements,
     generate_match_analysis,
+    generate_suggestions,
 )
 from app.prompts.resume_prompts import (
     RESUME_SUMMARY_SYSTEM_PROMPT,
@@ -19,11 +23,11 @@ from app.models.schemas import (
     RoleRequirements,
     MatchRequest,
     MatchResult,
+    SuggestionRequest,
+    SuggestionResult,
 )
 
-from app.services.matcher import calculate_match_score
-
-from app.prompts.match_prompts import MATCH_ANALYSIS_SYSTEM_PROMPT
+from app.prompts.suggestion_prompts import SUGGESTION_SYSTEM_PROMPT
 
 app = FastAPI(title="Resume Analyzer API")
 
@@ -160,3 +164,30 @@ async def match_resume_to_role_endpoint(payload: MatchRequest):
         match_percentage=score_data["match_percentage"],
         analysis=analysis,
     )
+
+
+
+@app.post("/generate-suggestions", response_model=SuggestionResult)
+async def generate_suggestions_endpoint(payload: SuggestionRequest):
+    # Handle the "no gaps" case without spending an LLM call
+    if not payload.missing_skills:
+        return SuggestionResult(
+            suggestions=[],
+            overall_advice=(
+                f"Great news — your resume already covers all the key skills "
+                f"typically required for a {payload.role_title} role. "
+                f"Focus on quantifying your impact in existing experience and projects."
+            ),
+        )
+
+    try:
+        result = generate_suggestions(
+            payload.role_title,
+            payload.matched_skills,
+            payload.missing_skills,
+            SUGGESTION_SYSTEM_PROMPT,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    return result

@@ -172,3 +172,51 @@ def generate_match_analysis(resume_skills: list[str], required_skills: list[str]
             continue
 
     raise RuntimeError(f"Failed to generate match analysis: {last_error}")
+
+from app.models.schemas import SuggestionResult
+
+
+def generate_suggestions(
+    role_title: str,
+    matched_skills: list[str],
+    missing_skills: list[str],
+    system_prompt: str,
+) -> SuggestionResult:
+    user_content = (
+        f"Job role: {role_title}\n"
+        f"Matched skills: {matched_skills}\n"
+        f"Missing skills: {missing_skills}"
+    )
+
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = client.chat.completions.create(
+                model=MODEL,
+                temperature=0.3,
+                max_tokens=1500,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "suggestion_result",
+                        "schema": SuggestionResult.model_json_schema(),
+                    },
+                },
+            )
+            raw_json = response.choices[0].message.content
+            return SuggestionResult.model_validate_json(raw_json)
+
+        except APIError as e:
+            last_error = e
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SECONDS * attempt)
+            continue
+        except ValueError as e:
+            last_error = e
+            break
+
+    raise RuntimeError(f"Failed to generate suggestions: {last_error}")
