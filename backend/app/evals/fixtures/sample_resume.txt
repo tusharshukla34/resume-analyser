@@ -1,0 +1,24 @@
+SAMPLE CANDIDATE
+Email: sample@example.com
+
+SUMMARY
+Data professional with experience in analytics, machine learning and reporting.
+
+SKILLS
+Programming: Python, SQL, MySQL, Machine Learning
+BI Tools: Tableau, Power BI, MS-Excel
+Cloud: Azure
+Relevant Courses: Probability and Statistics, Data Analytics, Database Management System
+
+EDUCATION
+B-Tech in Computer Science Engineering, Sample University (2023 - 2026)
+
+WORK EXPERIENCE
+Data Science Intern, Sample Company (May 2026 - Present)
+- Performed exploratory data analysis to find trends and patterns.
+- Built and evaluated classification models using Python and Scikit-learn.
+- Built dashboards in Power BI for weekly reporting.
+
+ACADEMIC PROJECTS
+- Sales Dashboard: interactive Tableau dashboard over a SQL database.
+- Sonar Rock vs Mine Prediction: binary classification with Python, Scikit-learn and cross-validation.
