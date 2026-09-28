@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-
+from collections import Counter
 from app.services.llm_client import extract_structured_resume, get_role_requirements
 from app.services.matcher import calculate_match_score, normalize_skill
 from app.prompts.resume_prompts import RESUME_EXTRACTION_SYSTEM_PROMPT
@@ -20,10 +20,13 @@ def main() -> None:
 
     scores = []
     required_per_run = []
+    resume_sets = []
     total_false_gaps = 0
 
     for i in range(1, runs + 1):
         resume = extract_structured_resume(resume_text, RESUME_EXTRACTION_SYSTEM_PROMPT)
+        resume_sets.append({normalize_skill(s) for s in resume.skills} - {""})
+        
         role_data = get_role_requirements(role, ROLE_UNDERSTANDING_SYSTEM_PROMPT)
         result = calculate_match_score(resume.skills, role_data.required_skills)
 
@@ -50,6 +53,10 @@ def main() -> None:
     print(f"role skills that came and went: {sorted(sometimes)}")
     print(f"false gaps across all runs: {total_false_gaps}")
 
+
+    rc = Counter(s for r in resume_sets for s in r)
+    print(f"resume skills in every run: {sorted(s for s, c in rc.items() if c == runs)}")
+    print(f"resume skills in some runs: {sorted((s, c) for s, c in rc.items() if c < runs)}")
 
 if __name__ == "__main__":
     main()
