@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 from app.services.llm_client import extract_structured_resume, get_role_requirements
-from app.services.matcher import calculate_match_score
+from app.services.matcher import calculate_match_score, normalize_skill
 from app.prompts.resume_prompts import RESUME_EXTRACTION_SYSTEM_PROMPT
 from app.prompts.role_prompts import ROLE_UNDERSTANDING_SYSTEM_PROMPT
 
@@ -27,9 +27,9 @@ def main() -> None:
         role_data = get_role_requirements(role, ROLE_UNDERSTANDING_SYSTEM_PROMPT)
         result = calculate_match_score(resume.skills, role_data.required_skills)
 
-        required = {s.strip().lower() for s in role_data.required_skills}
-        false_gaps = set(result["missing_skills"]) & CLEARLY_PRESENT
-
+        required = {normalize_skill(s) for s in role_data.required_skills}
+        false_gaps = {normalize_skill(s) for s in result["missing_skills"]} & CLEARLY_PRESENT
+        
         scores.append(result["match_percentage"])
         required_per_run.append(required)
         total_false_gaps += len(false_gaps)
