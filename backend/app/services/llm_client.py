@@ -105,7 +105,8 @@ def get_role_requirements(role_title: str, system_prompt: str) -> RoleRequiremen
         try:
             response = client.chat.completions.create(
                 model=MODEL,
-                temperature=0.2,
+                temperature=0,
+                seed=42,    
                 max_tokens=1000,
                 messages=[
                     {"role": "system", "content": system_prompt},
